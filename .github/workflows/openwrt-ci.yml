@@ -1,46 +1,62 @@
-# 
-# <https://github.com/KFERMercer/OpenWrt-CI>
-#
-# Copyright (C) 2019 P3TERX
-#
-# Copyright (C) 2020 KFERMercer
-#
-name: OpenWrt-CI
+name: Lean OpenWRT x86_64 云编译（BIOS+EFI双版本）
 
 on:
-  workflow_dispatch:
-  #schedule:
-  #  - cron: 0 20 * * *
-
-permissions:
-  contents: read
+  workflow_dispatch:  # 手动触发编译（推荐）
+  # schedule:
+  #   - cron: '0 20 * * 0'  # 每周日 20 点自动编译（可选）
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-    steps:
-      - name: 检出 Lean 源码
-        uses: actions/checkout@main
+    permissions:
+      contents: read
+      actions: write
+      artifacts: write
 
-      - name: 安装编译依赖
+    steps:
+      - name: 检出 Lean 官方源码
+        uses: actions/checkout@v4
+        with:
+          repository: coolsnowwolf/lede
+          branch: master
+          fetch-depth: 1
+
+      - name: 清理系统环境 & 安装编译依赖
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
+          # 清理冗余文件释放空间
           sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo apt clean all && sudo apt autoclean all
+          # 更新系统并安装编译依赖
           sudo apt update -y
           sudo apt full-upgrade -y
           sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pip libpython3-dev qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+          # 配置 Python 2.7 兼容（Lean 源码依赖）
           sudo ln -sf /usr/bin/python2.7 /usr/bin/python
+          # 设置时区（避免编译时间异常）
           sudo timedatectl set-timezone Asia/Shanghai
 
-      - name: 加载 x86/64 基础配置 + 全量插件
+      - name: 同步最新软件包源 & 修复依赖
         run: |
-          # 更新并安装所有软件包源
-          ./scripts/feeds update -a
+          # 清理旧 feeds 缓存
+          ./scripts/feeds clean
+          # 强制同步所有 feeds 源（解决插件找不到问题）
+          ./scripts/feeds update -f -a
+          # 安装所有 feeds 包
           ./scripts/feeds install -a
-          
-          # 加载 x86/64 官方默认配置
-          cp configs/x86_64.config .config
+
+      - name: 生成 x86/64 基础配置（BIOS+EFI双支持）+ 全量插件
+        run: |
+          # 生成 x86/64 架构默认配置（同时支持 BIOS 和 EFI）
+          make defconfig
+          # 强制开启 BIOS 固件生成（关键：确保非 EFI 版 img 生成）
+          echo 'CONFIG_TARGET_IMAGES_GZIP=y' >> .config
+          echo 'CONFIG_TARGET_x86_64=y' >> .config
+          echo 'CONFIG_TARGET_x86_64_Generic=y' >> .config
+          echo 'CONFIG_TARGET_IMAGES_SQUASHFS=y' >> .config
+          echo 'CONFIG_TARGET_IMAGES_COMBINED=y' >> .config
+          echo 'CONFIG_TARGET_IMAGES_COMBINED_EFI=y' >> .config  # 同时保留 EFI 版
           
           # ========== 核心代理插件 ==========
           echo 'CONFIG_PACKAGE_luci-app-passwall=y' >> .config
@@ -71,22 +87,30 @@ jobs:
           # ========== 主题 ==========
           echo 'CONFIG_PACKAGE_luci-theme-argon=y' >> .config
           
-          # 自动修正配置（解决插件依赖冲突，关键步骤）
+          # 自动修正配置（解决插件依赖冲突）
           make defconfig
+          # 显示最终配置（验证 BIOS/EFI 配置是否生效）
+          cat .config | grep -E 'TARGET_IMAGES|x86_64' | sort
 
-      - name: 下载编译依赖包
+      - name: 下载编译依赖包（加速编译）
         run: |
+          # 多线程下载依赖包
           make -j$(nproc) download V=s
-          # 删除无效小文件，避免编译报错
+          # 删除无效小文件（避免编译报错）
           find dl -size -1024c -exec ls -l {} \;
           find dl -size -1024c -exec rm -f {} \;
 
       - name: 开始编译固件（单线程更稳定）
         run: |
+          # 首次编译用单线程，避免多线程依赖冲突
           make -j1 V=s || make -j1 V=s
+          # 列出编译生成的固件（验证双版本是否都生成）
+          ls -lh bin/targets/x86/64/ | grep -E 'combined.img|combined-efi.img'
 
-      - name: 上传编译好的固件
-        uses: actions/upload-artifact@main
+      - name: 上传编译完成的固件
+        uses: actions/upload-artifact@v4
         with:
-          name: OpenWRT_x86_64_固件_含PassWall+SSRPlus+AdGuardHome
+          name: OpenWRT_x86_64_双版本固件(BIOS+EFI)
           path: bin/targets/
+          retention-days: 7  # 固件保留7天
+          if-no-files-found: error  # 无固件则标记失败
