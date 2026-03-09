@@ -62,8 +62,52 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: Generate configuration file
-        run: make defconfig
+      - name: 
+        run: |
+          make defconfig
+          # 强制开启 BIOS 固件生成（关键：确保非 EFI 版 img 生成）
+          echo 'CONFIG_TARGET_IMAGES_GZIP=y' >> .config
+          echo 'CONFIG_TARGET_x86_64=y' >> .config
+          echo 'CONFIG_TARGET_x86_64_Generic=y' >> .config
+          echo 'CONFIG_TARGET_IMAGES_SQUASHFS=y' >> .config
+          echo 'CONFIG_TARGET_IMAGES_COMBINED=y' >> .config
+          echo 'CONFIG_TARGET_IMAGES_COMBINED_EFI=y' >> .config  # 同时保留 EFI 版
+          
+          # ========== 核心代理插件 ==========
+          echo 'CONFIG_PACKAGE_luci-app-passwall=y' >> .config
+          echo 'CONFIG_PACKAGE_luci-app-ssr-plus=y' >> .config
+          # ========== DNS/广告过滤 ==========
+          echo 'CONFIG_PACKAGE_luci-app-adguardhome=y' >> .config
+          echo 'CONFIG_PACKAGE_luci-app-mosdns=y' >> .config
+          echo 'CONFIG_PACKAGE_luci-app-adbyby-plus=y' >> .config
+          # ========== 网络加速 ==========
+          echo 'CONFIG_PACKAGE_luci-app-turboacc=y' >> .config
+          echo 'CONFIG_PACKAGE_luci-app-broadbandacc=y' >> .config
+          echo 'CONFIG_PACKAGE_luci-app-fastnet=y' >> .config
+          # ========== 文件管理 ==========
+          echo 'CONFIG_PACKAGE_luci-app-filebrowser=y' >> .config
+          # ========== 多线多拨/负载均衡 ==========
+          echo 'CONFIG_PACKAGE_luci-app-mwan3=y' >> .config
+          echo 'CONFIG_PACKAGE_luci-app-syncdial=y' >> .config
+          # ========== 应用过滤/列表 ==========
+          echo 'CONFIG_PACKAGE_luci-app-openlist2=y' >> .config
+          # ========== 硬件相关 ==========
+          echo 'CONFIG_PACKAGE_luci-app-ap-modem=y' >> .config
+          # ========== 共享服务 ==========
+          echo 'CONFIG_PACKAGE_luci-app-samba4=y' >> .config
+          # ========== 游戏加速 ==========
+          echo 'CONFIG_PACKAGE_luci-app-uugamebooster=y' >> .config
+          # ========== 解锁网易云 ==========
+          echo 'CONFIG_PACKAGE_luci-app-unblockneteasemusic=y' >> .config
+          # ========== 主题 ==========
+          echo 'CONFIG_PACKAGE_luci-theme-argon=y' >> .config
+          
+          # 自动修正配置（解决插件依赖冲突）
+          make defconfig
+          cat .config | grep -E 'TARGET_IMAGES|x86_64' | sort
+
+      #- name: Generate configuration file
+      #  run: make defconfig
 
       - name: Download packages
         run: make download -j16
