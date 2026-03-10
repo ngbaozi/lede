@@ -1,21 +1,26 @@
+# 
 # <https://github.com/KFERMercer/OpenWrt-CI>
+#
 # Copyright (C) 2019 P3TERX
+#
 # Copyright (C) 2020 KFERMercer
-name: LEAN-CI
+#
+name: OpenWrt-CI-2
 
 on:
   schedule:
     - cron: 0 20 * * *
   workflow_dispatch:  # 手动触发编译（优先使用）
 
-# 修复权限配置：移除错误的 artifacts，仅保留合法项
 permissions:
-  contents: write  # 允许上传/修改仓库内容（包含固件 artifact）
-  actions: write   # 允许操作工作流（如标记状态、上传日志）
+  contents: read
 
 jobs:
+
   build_openwrt:
+
     name: Build OpenWrt Firmware
+
     runs-on: ubuntu-22.04
 
     steps:
@@ -37,10 +42,6 @@ jobs:
 
       - name: Checkout OpenWrt
         uses: actions/checkout@v4
-        with:
-          repository: coolsnowwolf/lede  # 明确指定 Lean 源码
-          branch: master
-          fetch-depth: 1
 
       - name: Free Disk Space (Ubuntu)
         uses: jlumbroso/free-disk-space@main
@@ -52,75 +53,50 @@ jobs:
           large-packages: true
           swap-storage: true
 
-      - name: Update feeds (添加插件源+强制同步)
+      - name: Add custom feeds  # 新增步骤：添加你需要的软件源
         run: |
-          # 启用 helloworld 源（PassWall/SSR Plus 依赖）
-          sed -i 's/#src-git helloworld/src-git helloworld/g' ./feeds.conf.default
-          # 新增 kenzok8 源（AdGuardHome/mosdns 等插件依赖）
-          echo 'src-git small https://github.com/kenzok8/small' >> feeds.conf.default
-          echo 'src-git kenzo https://github.com/kenzok8/openwrt-packages' >> feeds.conf.default
-          # 清理旧缓存 + 强制同步所有源
-          ./scripts/feeds clean
-          ./scripts/feeds update -f -a
+          echo 'src-git kenzo https://github.com/kenzok8/openwrt-packages' >> ./feeds.conf.default
+          echo 'src-git small https://github.com/kenzok8/small' >> ./feeds.conf.default
+          echo 'src-git Lienol https://github.com/Lienol/openwrt-package' >> ./feeds.conf.default
+          # 注释掉原有helloworld（避免冲突，kenzo源已包含）
+          sed -i 's/src-git helloworld/#src-git helloworld/g' ./feeds.conf.default
+
+      - name: Update feeds
+        run: |
+          ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: Generate configuration file (x86/64 + 全插件 + BIOS/EFI双版本)
+      - name: Configure custom packages  # 新增步骤：启用需要的插件/主题
         run: |
-          # 生成 x86/64 基础配置
-          make defconfig
-          
-          # ========== 强制开启 BIOS/EFI 双版本固件生成 ==========
-          echo 'CONFIG_TARGET_x86_64=y' >> .config
-          echo 'CONFIG_TARGET_x86_64_Generic=y' >> .config
-          echo 'CONFIG_TARGET_IMAGES_SQUASHFS=y' >> .config
-          echo 'CONFIG_TARGET_IMAGES_COMBINED=y' >> .config  # 非 EFI 版 combined.img
-          echo 'CONFIG_TARGET_IMAGES_COMBINED_EFI=y' >> .config  # EFI 版 combined-efi.img
-          echo 'CONFIG_TARGET_IMAGES_GZIP=y' >> .config
-          
-          # ========== 核心代理插件 ==========
-          echo 'CONFIG_PACKAGE_luci-app-passwall=y' >> .config
-          echo 'CONFIG_PACKAGE_luci-app-ssr-plus=y' >> .config
-          # ========== DNS/广告过滤 ==========
-          echo 'CONFIG_PACKAGE_luci-app-adguardhome=y' >> .config
-          echo 'CONFIG_PACKAGE_luci-app-mosdns=y' >> .config
-          echo 'CONFIG_PACKAGE_luci-app-adbyby-plus=y' >> .config
-          # ========== 网络加速 ==========
-          echo 'CONFIG_PACKAGE_luci-app-turboacc=y' >> .config
-          echo 'CONFIG_PACKAGE_luci-app-broadbandacc=y' >> .config
-          echo 'CONFIG_PACKAGE_luci-app-fastnet=y' >> .config
-          # ========== 文件管理 ==========
-          echo 'CONFIG_PACKAGE_luci-app-filebrowser=y' >> .config
-          # ========== 多线多拨/负载均衡 ==========
-          echo 'CONFIG_PACKAGE_luci-app-mwan3=y' >> .config
-          echo 'CONFIG_PACKAGE_luci-app-syncdial=y' >> .config
-          # ========== 应用过滤/列表 ==========
-          echo 'CONFIG_PACKAGE_luci-app-openlist2=y' >> .config
-          # ========== 硬件相关 ==========
-          echo 'CONFIG_PACKAGE_luci-app-ap-modem=y' >> .config
-          # ========== 共享服务 ==========
-          echo 'CONFIG_PACKAGE_luci-app-samba4=y' >> .config
-          # ========== 游戏加速 ==========
-          echo 'CONFIG_PACKAGE_luci-app-uugamebooster=y' >> .config
-          # ========== 解锁网易云 ==========
-          echo 'CONFIG_PACKAGE_luci-app-unblockneteasemusic=y' >> .config
-          # ========== 主题 ==========
-          echo 'CONFIG_PACKAGE_luci-theme-argon=y' >> .config
-          
-          # 自动修正配置（解决插件依赖冲突）
-          make defconfig
-          # 验证配置（日志中可查看插件是否添加成功）
-          cat .config | grep -E 'PACKAGE_luci-app|TARGET_IMAGES' | sort
+          # 进入配置界面，启用指定插件和主题
+          make menuconfig << EOF
+          CONFIG_PACKAGE_luci-app-passwall=y
+          CONFIG_PACKAGE_luci-app-ssr-plus=y
+          CONFIG_PACKAGE_luci-app-adguardhome=y
+          CONFIG_PACKAGE_luci-app-mosdns=y
+          CONFIG_PACKAGE_luci-app-adbyby-plus=y
+          CONFIG_PACKAGE_luci-app-turboacc=y
+          CONFIG_PACKAGE_luci-app-filebrowser=y
+          CONFIG_PACKAGE_luci-app-mwan3=y
+          CONFIG_PACKAGE_luci-app-openlist2=y
+          CONFIG_PACKAGE_luci-app-syncdial=y
+          CONFIG_PACKAGE_luci-app-ap-modem=y
+          CONFIG_PACKAGE_luci-app-broadbandacc=y
+          CONFIG_PACKAGE_luci-app-samba4=y
+          CONFIG_PACKAGE_luci-app-uugamebooster=y
+          CONFIG_PACKAGE_luci-app-unblockneteasemusic=y
+          CONFIG_PACKAGE_luci-theme-argon=y
+          EOF
+
+      - name: Generate configuration file
+        run: make defconfig
 
       - name: Download packages
-        run: |
-          make download -j16
-          # 删除无效小文件（避免编译报错）
-          find dl -size -1024c -exec ls -l {} \;
-          find dl -size -1024c -exec rm -f {} \;
+        run: make download -j16
 
-      - name: Compile firmware (单线程更稳定)
+      - name: Compile firmware
         run: |
-          make -j1 V=s || make -j1 V=s  # 插件多，单线程避免崩溃
+          make -j$(nproc) || make -j1 V=s
           echo "======================="
           echo "Space usage:"
           echo "======================="
@@ -129,8 +105,6 @@ jobs:
           du -h --max-depth=1 ./ --exclude=build_dir --exclude=bin
           du -h --max-depth=1 ./build_dir
           du -h --max-depth=1 ./bin
-          # 验证固件生成（日志中查看是否有非 EFI 版 img）
-          ls -lh bin/targets/x86/64/ | grep -E 'combined.img|combined-efi.img'
 
       - name: Prepare artifact
         run: |
@@ -145,19 +119,15 @@ jobs:
         with:
           name: OpenWrt_buildinfo
           path: ./artifact/buildinfo/
-          retention-days: 7
 
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
           name: OpenWrt_package
           path: ./artifact/package/
-          retention-days: 7
 
-      - name: Upload firmware (包含非 EFI 版 img)
+      - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
-          name: OpenWrt_firmware_x86_64(BIOS+EFI)
-          path: bin/targets/
-          retention-days: 7  # 固件保留7天
-          if-no-files-found: error  # 无固件则标记失败
+          name: OpenWrt_firmware
+          path: ./bin/targets/
