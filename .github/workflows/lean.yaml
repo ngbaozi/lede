@@ -5,11 +5,12 @@
 #
 # Copyright (C) 2020 KFERMercer
 #
-name: OpenWrt-CI
+name: OpenWrt-CI-2
 
 on:
   schedule:
     - cron: 0 20 * * *
+  workflow_dispatch:  # 手动触发编译（优先使用）
 
 permissions:
   contents: read
