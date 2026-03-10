@@ -1,0 +1,161 @@
+# <https://github.com/KFERMercer/OpenWrt-CI>
+# Copyright (C) 2019 P3TERX
+# Copyright (C) 2020 KFERMercer
+name: OpenWrt-CI
+
+on:
+  schedule:
+    - cron: 0 20 * * *
+  workflow_dispatch:  # 新增：手动触发编译（优先使用）
+
+permissions:
+  contents: read
+  actions: write  # 解决固件上传权限问题
+  artifacts: write
+
+jobs:
+  build_openwrt:
+    name: Build OpenWrt Firmware
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Space cleanup and Initialization environment
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          docker image prune -f
+          sudo -E rm -rf /usr/share/dotnet /etc/mysql /etc/php /etc/apt/sources.list.d /usr/local/lib/android
+          sudo -E apt-mark hold grub-efi-amd64-signed
+          sudo -E apt update
+          sudo -E apt -y purge azure-cli* docker* ghc* zulu* llvm* firefox google* dotnet* powershell* openjdk* mysql* php* mongodb* dotnet* snap*
+          sudo -E apt -y full-upgrade
+          sudo -E apt -y install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache clang cmake cpio curl device-tree-compiler flex gawk gcc-multilib g++-multilib gettext genisoimage git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool llvm lrzsz msmtp ninja-build p7zip p7zip-full patch pkgconf python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+          sudo -E systemctl daemon-reload
+          sudo -E apt -y autoremove --purge
+          sudo -E apt clean
+          sudo -E timedatectl set-timezone "Asia/Shanghai"
+
+      - name: Checkout OpenWrt
+        uses: actions/checkout@v4
+        with:
+          repository: coolsnowwolf/lede  # 明确指定 Lean 源码（核心）
+          branch: master
+          fetch-depth: 1
+
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+
+      - name: Update feeds (添加插件源+强制同步)
+        run: |
+          # 启用 helloworld 源（PassWall/SSR Plus 依赖）
+          sed -i 's/#src-git helloworld/src-git helloworld/g' ./feeds.conf.default
+          # 新增 kenzok8 源（AdGuardHome/mosdns 等插件依赖）
+          echo 'src-git small https://github.com/kenzok8/small' >> feeds.conf.default
+          echo 'src-git kenzo https://github.com/kenzok8/openwrt-packages' >> feeds.conf.default
+          # 清理旧缓存 + 强制同步所有源（避免插件找不到）
+          ./scripts/feeds clean
+          ./scripts/feeds update -f -a
+          ./scripts/feeds install -a
+
+      - name: Generate configuration file (x86/64 + 全插件 + BIOS/EFI双版本)
+        run: |
+          # 生成 x86/64 基础配置
+          make defconfig
+          
+          # ========== 强制开启 BIOS/EFI 双版本固件生成 ==========
+          echo 'CONFIG_TARGET_x86_64=y' >> .config
+          echo 'CONFIG_TARGET_x86_64_Generic=y' >> .config
+          echo 'CONFIG_TARGET_IMAGES_SQUASHFS=y' >> .config
+          echo 'CONFIG_TARGET_IMAGES_COMBINED=y' >> .config  # 非 EFI 版 combined.img
+          echo 'CONFIG_TARGET_IMAGES_COMBINED_EFI=y' >> .config  # EFI 版 combined-efi.img
+          echo 'CONFIG_TARGET_IMAGES_GZIP=y' >> .config
+          
+          # ========== 核心代理插件 ==========
+          echo 'CONFIG_PACKAGE_luci-app-passwall=y' >> .config
+          echo 'CONFIG_PACKAGE_luci-app-ssr-plus=y' >> .config
+          # ========== DNS/广告过滤 ==========
+          echo 'CONFIG_PACKAGE_luci-app-adguardhome=y' >> .config
+          echo 'CONFIG_PACKAGE_luci-app-mosdns=y' >> .config
+          echo 'CONFIG_PACKAGE_luci-app-adbyby-plus=y' >> .config
+          # ========== 网络加速 ==========
+          echo 'CONFIG_PACKAGE_luci-app-turboacc=y' >> .config
+          echo 'CONFIG_PACKAGE_luci-app-broadbandacc=y' >> .config
+          echo 'CONFIG_PACKAGE_luci-app-fastnet=y' >> .config
+          # ========== 文件管理 ==========
+          echo 'CONFIG_PACKAGE_luci-app-filebrowser=y' >> .config
+          # ========== 多线多拨/负载均衡 ==========
+          echo 'CONFIG_PACKAGE_luci-app-mwan3=y' >> .config
+          echo 'CONFIG_PACKAGE_luci-app-syncdial=y' >> .config
+          # ========== 应用过滤/列表 ==========
+          echo 'CONFIG_PACKAGE_luci-app-openlist2=y' >> .config
+          # ========== 硬件相关 ==========
+          echo 'CONFIG_PACKAGE_luci-app-ap-modem=y' >> .config
+          # ========== 共享服务 ==========
+          echo 'CONFIG_PACKAGE_luci-app-samba4=y' >> .config
+          # ========== 游戏加速 ==========
+          echo 'CONFIG_PACKAGE_luci-app-uugamebooster=y' >> .config
+          # ========== 解锁网易云 ==========
+          echo 'CONFIG_PACKAGE_luci-app-unblockneteasemusic=y' >> .config
+          # ========== 主题 ==========
+          echo 'CONFIG_PACKAGE_luci-theme-argon=y' >> .config
+          
+          # 自动修正配置（解决插件依赖冲突，关键步骤）
+          make defconfig
+          # 验证配置（日志中可查看插件是否添加成功）
+          cat .config | grep -E 'PACKAGE_luci-app|TARGET_IMAGES' | sort
+
+      - name: Download packages
+        run: |
+          make download -j16
+          # 删除无效小文件（避免编译报错）
+          find dl -size -1024c -exec ls -l {} \;
+          find dl -size -1024c -exec rm -f {} \;
+
+      - name: Compile firmware (单线程更稳定)
+        run: |
+          make -j1 V=s || make -j1 V=s  # 插件多，单线程避免崩溃
+          echo "======================="
+          echo "Space usage:"
+          echo "======================="
+          df -h
+          echo "======================="
+          du -h --max-depth=1 ./ --exclude=build_dir --exclude=bin
+          du -h --max-depth=1 ./build_dir
+          du -h --max-depth=1 ./bin
+          # 验证固件生成（日志中查看是否有非 EFI 版 img）
+          ls -lh bin/targets/x86/64/ | grep -E 'combined.img|combined-efi.img'
+
+      - name: Prepare artifact
+        run: |
+          mkdir -p ./artifact/package
+          mkdir -p ./artifact/buildinfo
+          rm -rf $(find ./bin/targets/ -type d -name "packages")
+          cp -rf $(find ./bin/packages/ -type f -name "*.ipk") ./artifact/package/
+          cp -rf $(find ./bin/targets/ -type f -name "*.buildinfo" -o -name "*.manifest") ./artifact/buildinfo/
+
+      - name: Upload buildinfo
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenWrt_buildinfo
+          path: ./artifact/buildinfo/
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenWrt_package
+          path: ./artifact/package/
+
+      - name: Upload firmware (包含非 EFI 版 img)
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenWrt_firmware_x86_64(BIOS+EFI)
+          path: bin/targets/
+          retention-days: 7  # 固件保留7天
+          if-no-files-found: error  # 无固件则标记失败
