@@ -5,12 +5,11 @@
 #
 # Copyright (C) 2020 KFERMercer
 #
-name: OpenWrt-CI-2
+name: OpenWrt-CI
 
 on:
   schedule:
     - cron: 0 20 * * *
-  workflow_dispatch:  # 手动触发编译（优先使用）
 
 permissions:
   contents: read
@@ -53,42 +52,43 @@ jobs:
           large-packages: true
           swap-storage: true
 
-      - name: Add custom feeds  # 新增步骤：添加你需要的软件源
+      - name: Add custom feeds  # 新增：添加指定软件源
         run: |
           echo 'src-git kenzo https://github.com/kenzok8/openwrt-packages' >> ./feeds.conf.default
           echo 'src-git small https://github.com/kenzok8/small' >> ./feeds.conf.default
           echo 'src-git Lienol https://github.com/Lienol/openwrt-package' >> ./feeds.conf.default
-          # 注释掉原有helloworld（避免冲突，kenzo源已包含）
 
       - name: Update feeds
         run: |
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: Configure custom packages  # 新增步骤：启用需要的插件/主题
-        run: |
-          # 进入配置界面，启用指定插件和主题
-          make menuconfig << EOF
-          CONFIG_PACKAGE_luci-app-passwall=y
-          CONFIG_PACKAGE_luci-app-ssr-plus=y
-          CONFIG_PACKAGE_luci-app-adguardhome=y
-          CONFIG_PACKAGE_luci-app-mosdns=y
-          CONFIG_PACKAGE_luci-app-adbyby-plus=y
-          CONFIG_PACKAGE_luci-app-turboacc=y
-          CONFIG_PACKAGE_luci-app-filebrowser=y
-          CONFIG_PACKAGE_luci-app-mwan3=y
-          CONFIG_PACKAGE_luci-app-openlist2=y
-          CONFIG_PACKAGE_luci-app-syncdial=y
-          CONFIG_PACKAGE_luci-app-ap-modem=y
-          CONFIG_PACKAGE_luci-app-broadbandacc=y
-          CONFIG_PACKAGE_luci-app-samba4=y
-          CONFIG_PACKAGE_luci-app-uugamebooster=y
-          CONFIG_PACKAGE_luci-app-unblockneteasemusic=y
-          CONFIG_PACKAGE_luci-theme-argon=y
-          EOF
-
-      - name: Generate configuration file
+      - name: Generate default config
         run: make defconfig
+
+      - name: Enable custom packages (核心修复：直接修改.config文件)
+        run: |
+          # 方式1：echo追加配置项到.config（推荐，无界面环境友好）
+          echo "CONFIG_PACKAGE_luci-app-passwall=y" >> .config
+          echo "CONFIG_PACKAGE_luci-app-ssr-plus=y" >> .config
+          echo "CONFIG_PACKAGE_luci-app-adguardhome=y" >> .config
+          echo "CONFIG_PACKAGE_luci-app-mosdns=y" >> .config
+          echo "CONFIG_PACKAGE_luci-app-adbyby-plus=y" >> .config
+          echo "CONFIG_PACKAGE_luci-app-turboacc=y" >> .config
+          echo "CONFIG_PACKAGE_luci-app-filebrowser=y" >> .config
+          echo "CONFIG_PACKAGE_luci-app-mwan3=y" >> .config
+          echo "CONFIG_PACKAGE_luci-app-openlist2=y" >> .config
+          echo "CONFIG_PACKAGE_luci-app-syncdial=y" >> .config
+          echo "CONFIG_PACKAGE_luci-app-ap-modem=y" >> .config
+          echo "CONFIG_PACKAGE_luci-app-broadbandacc=y" >> .config
+          echo "CONFIG_PACKAGE_luci-app-samba4=y" >> .config
+          echo "CONFIG_PACKAGE_luci-app-uugamebooster=y" >> .config
+          echo "CONFIG_PACKAGE_luci-app-unblockneteasemusic=y" >> .config
+          echo "CONFIG_PACKAGE_luci-theme-argon=y" >> .config
+
+
+          # 重新生成配置（使修改生效）
+          make defconfig
 
       - name: Download packages
         run: make download -j16
