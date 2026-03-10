@@ -6,12 +6,12 @@ name: OpenWrt-CI
 on:
   schedule:
     - cron: 0 20 * * *
-  workflow_dispatch:  # 新增：手动触发编译（优先使用）
+  workflow_dispatch:  # 手动触发编译（优先使用）
 
+# 修复权限配置：移除错误的 artifacts，仅保留合法项
 permissions:
-  contents: read
-  actions: write  # 解决固件上传权限问题
-  artifacts: write
+  contents: write  # 允许上传/修改仓库内容（包含固件 artifact）
+  actions: write   # 允许操作工作流（如标记状态、上传日志）
 
 jobs:
   build_openwrt:
@@ -38,7 +38,7 @@ jobs:
       - name: Checkout OpenWrt
         uses: actions/checkout@v4
         with:
-          repository: coolsnowwolf/lede  # 明确指定 Lean 源码（核心）
+          repository: coolsnowwolf/lede  # 明确指定 Lean 源码
           branch: master
           fetch-depth: 1
 
@@ -59,7 +59,7 @@ jobs:
           # 新增 kenzok8 源（AdGuardHome/mosdns 等插件依赖）
           echo 'src-git small https://github.com/kenzok8/small' >> feeds.conf.default
           echo 'src-git kenzo https://github.com/kenzok8/openwrt-packages' >> feeds.conf.default
-          # 清理旧缓存 + 强制同步所有源（避免插件找不到）
+          # 清理旧缓存 + 强制同步所有源
           ./scripts/feeds clean
           ./scripts/feeds update -f -a
           ./scripts/feeds install -a
@@ -106,7 +106,7 @@ jobs:
           # ========== 主题 ==========
           echo 'CONFIG_PACKAGE_luci-theme-argon=y' >> .config
           
-          # 自动修正配置（解决插件依赖冲突，关键步骤）
+          # 自动修正配置（解决插件依赖冲突）
           make defconfig
           # 验证配置（日志中可查看插件是否添加成功）
           cat .config | grep -E 'PACKAGE_luci-app|TARGET_IMAGES' | sort
@@ -145,12 +145,14 @@ jobs:
         with:
           name: OpenWrt_buildinfo
           path: ./artifact/buildinfo/
+          retention-days: 7
 
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
           name: OpenWrt_package
           path: ./artifact/package/
+          retention-days: 7
 
       - name: Upload firmware (包含非 EFI 版 img)
         uses: actions/upload-artifact@v4
